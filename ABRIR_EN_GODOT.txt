@@ -1,0 +1,14 @@
+PIXEL PANIC
+===========
+
+1. Descomprime esta carpeta completa.
+2. Abre Godot 4.6.3 (versión estándar, no .NET).
+3. Pulsa IMPORTAR y selecciona project.godot.
+4. Espera la importación y pulsa F5 para jugar.
+5. En AJUSTES activa MODO LIGERO si tu computadora lo necesita.
+
+Controles: A/D mover, ESPACIO doble salto, S agacharse,
+J disparar, SHIFT impulso, ESC pausa.
+
+Este archivo es el PROYECTO EDITABLE de Godot, no un EXE ni un APK.
+La guía LEEME.md explica cómo exportarlo y los requisitos de equipos antiguos.
