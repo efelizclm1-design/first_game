@@ -4,9 +4,11 @@ const World = preload("res://scripts/world.gd")
 const Painter = preload("res://scripts/painter.gd")
 const SAVE_PATH = "user://pixel_panic_save.json"
 var save_path = SAVE_PATH
-const FLOOR = 294.0
-const MAX_HAZARDS = 46
-const MAX_PARTICLES = 90
+const FLOOR = 602.0
+const WIDTH = 1280.0
+const UI_SCALE = 2.0
+const MAX_HAZARDS = 54
+const MAX_PARTICLES = 120
 
 var painter
 var font: FontFile
@@ -86,6 +88,34 @@ var capture_mode = false
 var test_mode = false
 var test_axis = 0.0
 var quitting = false
+var pressure = {}
+var director_rng = RandomNumberGenerator.new()
+var platforms: Array = []
+var grounded = true
+var coyote = 0.1
+var jump_buffer = 0.0
+var drop_timer = 0.0
+var muzzle_flash = 0.0
+var hurt_flash = 0.0
+var aim_direction = Vector2.RIGHT
+var run_cycle = 0.0
+var sim_time = 0.0
+var wave_index = 0
+var tutorial_seen = false
+var tutorial_distance = 0.0
+var tutorial_origin = Vector2.ZERO
+var tutorial_phase_time = 0.0
+var shots_fired = 0
+var test_actions = {}
+var escape_x = 640.0
+var attack_log: Array = []
+var no_shot_time = 0.0
+var scene_texture: Texture2D
+var inhabitant_texture: Texture2D
+var lava_patches: Array = []
+var lava_clock = 10.0
+var guide_page = -1
+
 
 func _ready() -> void:
 	rng.randomize()
@@ -98,6 +128,12 @@ func _ready() -> void:
 		for prefix in ["zone", "hazards", "boss"]:
 			var key = "%s_%d" % [prefix,z]
 			textures[key] = load("res://assets/art/%s.png" % key)
+	for key in ["nilo_actions", "nilo_arm"]:
+		textures[key] = load("res://assets/combat/%s.png" % key)
+	for z in range(5):
+		for prefix in ["threats", "guardian"]:
+			var key = "%s_%d" % [prefix,z]
+			textures[key] = load("res://assets/combat/%s.png" % key)
 	for key in ["jump", "shoot", "hit", "pickup", "dash", "click", "warning", "win", "lose", "laugh"]:
 		sounds[key] = load("res://assets/audio/%s.wav" % key)
 	for i in range(8):
@@ -145,6 +181,7 @@ func load_progress() -> void:
 			if data.settings.get(key) is bool:
 				settings[key] = data.settings[key]
 	selected = unlocked
+	tutorial_seen = bool(data.get("tutorial_v2",false))
 
 func save_progress() -> void:
 	if not save_enabled:
@@ -153,7 +190,7 @@ func save_progress() -> void:
 	if file == null:
 		notify("No se pudo guardar el progreso.")
 		return
-	file.store_string(JSON.stringify({"version":1,"unlocked":unlocked,"medals":medals,"settings":settings}))
+	file.store_string(JSON.stringify({"version":2,"tutorial_v2":tutorial_seen,"unlocked":unlocked,"medals":medals,"settings":settings}))
 	file.close()
 	var error = DirAccess.rename_absolute(save_path + ".tmp",save_path)
 	if error != OK:
@@ -201,49 +238,76 @@ func begin_level(index: int) -> void:
 	selected = clampi(index,0,19)
 	level_data = World.level(selected)
 	zone = level_data.zone
+	pressure = World.pressure(selected,0)
+	# One large backdrop at a time, instead of retaining all twenty in RAM.
+	scene_texture = load("res://assets/combat/arena_%02d.png" % selected)
+	inhabitant_texture = load("res://assets/combat/inhabitants_%02d.png" % selected)
+	platforms = World.platforms(selected)
+	director_rng.seed = level_data.seed
 	elapsed = 0
+	sim_time = 0
 	duration = level_data.duration
 	hp = 3
 	score = 0
 	kills = 0
 	hits = 0
-	p = Vector2(160,FLOOR)
+	p = Vector2(260,FLOOR)
 	velocity = Vector2.ZERO
 	facing = 1
 	ducking = false
+	grounded = true
 	jumps = 0
-	invincible = 1.5
+	coyote = .1
+	jump_buffer = 0
+	drop_timer = 0
+	invincible = 1.2
 	dash_time = 0
 	dash_cooldown = 0
 	shot_cooldown = 0
+	muzzle_flash = 0
+	hurt_flash = 0
+	aim_direction = Vector2.RIGHT
+	run_cycle = 0
 	shield = 0
 	slow_time = 0
 	rapid_time = 0
-	spawn_clock = 1.8
-	enemy_clock = 4.2
-	gift_clock = 6
-	arena_clock = 10
+	shots_fired = 0
+	no_shot_time = 0
+	spawn_clock = 2.4
+	enemy_clock = maxf(2.6,8.0-selected*.26)
+	gift_clock = 9
+	arena_clock = 15
+	lava_clock = 10
+	lava_patches.clear()
 	arena_phase = "stable"
-	arena_left = 24
-	arena_right = 616
-	target_left = 24
-	target_right = 616
+	arena_timer = 0
+	arena_left = 36
+	arena_right = WIDTH-36
+	target_left = arena_left
+	target_right = arena_right
+	escape_x = WIDTH*.5
+	wave_index = 0
 	hazards.clear()
 	enemies.clear()
 	bullets.clear()
 	pickups.clear()
 	particles.clear()
 	floaters.clear()
+	attack_log.clear()
 	boss = {}
-	boss_clock = 2.5
+	boss_clock = 3.5
 	boss_pattern = 0
 	shake = 0
+	toast_timer = 0
 	damage_source = ""
 	if level_data.boss:
-		boss = {"p":Vector2(492,140),"hp":float(level_data.boss_hp),"max_hp":float(level_data.boss_hp),"flash":0.0,"phase":1}
-	tutorial_active = selected == 0 and not medals.has("0") and not capture_mode
+		boss = {"p":Vector2(962,278),"hp":float(level_data.boss_hp),"max_hp":float(level_data.boss_hp),"flash":0.0,"phase":1,"state":"idle","timer":0.0,"blend":0.0}
+	tutorial_active = selected==0 and not capture_mode
+	guide_page = 0 if tutorial_active else -1
 	tutorial_step = 0
 	tutorial_clock = 0
+	tutorial_phase_time = 0
+	tutorial_origin = p
 	play_music(zone)
 	change_state("loading")
 
@@ -254,11 +318,10 @@ func _process(dt: float) -> void:
 	toast_timer = maxf(0,toast_timer-dt)
 	if state == "loading" and state_time >= 1.5:
 		change_state("play")
-	elif state == "play" and not capture_mode:
-		step_game(dt)
+
 	if state == "dead" and state_time-dt < .4 and state_time >= .4 and settings.taunts:
 		sound("laugh")
-	if state not in ["pause","settings"]:
+	if state not in ["play","pause","settings"]:
 		step_particles(dt)
 	queue_redraw()
 	if capture_mode:
@@ -272,7 +335,7 @@ func _process(dt: float) -> void:
 
 func down(action: String) -> bool:
 	if test_mode:
-		return false
+		return bool(test_actions.get(action,false))
 	if touch_actions.get(action,false) or mouse_action == action:
 		return true
 	match action:
@@ -283,279 +346,426 @@ func down(action: String) -> bool:
 	return false
 
 func jump() -> void:
-	if state != "play" or jumps >= 2:
+	if state!="play" or (tutorial_active and guide_page>=0):return
+	if grounded and down("duck") and p.y<FLOOR-2:
+		drop_timer = .22
+		grounded = false
+		p.y += 4
+		velocity.y = 80
 		return
-	velocity.y = -315 if jumps == 0 else -290
+	jump_buffer = .12
+	if jumps>=2:return
+	if grounded or coyote>0:jumps=0
+	velocity.y = -445 if jumps==0 else -415
 	jumps += 1
+	grounded = false
+	coyote = 0
 	ducking = false
+	jump_buffer = 0
 	burst(p,Color("a6e4c5"),8)
 	sound("jump")
-	if tutorial_active and tutorial_step == 1:
-		tutorial_step = 2
-		tutorial_clock = 0
 
 func dash() -> void:
-	if state != "play" or dash_cooldown > 0:
-		return
+	if state!="play" or dash_cooldown>0 or (tutorial_active and guide_page>=0):return
 	dash_time = .18
-	dash_cooldown = 1.15
-	invincible = maxf(invincible,.24)
+	dash_cooldown = 1.05
+	invincible = maxf(invincible,.26)
 	velocity.y = minf(velocity.y,0)
 	sound("dash")
-	if tutorial_active and tutorial_step == 4:
-		tutorial_active = false
-		notify("¡Ya estás listo! Sobrevive y no dejes de moverte.")
+	if tutorial_active and tutorial_step==4:advance_tutorial()
 
 func player_rect() -> Rect2:
-	return Rect2(p.x-8,p.y-(15 if ducking else 29),16,15 if ducking else 29)
+	return Rect2(p.x-10,p.y-(22 if ducking else 46),20,22 if ducking else 46)
 
 func step_game(dt: float) -> void:
-	var tutorial_before = tutorial_active
-	if tutorial_active:
-		tutorial_clock += dt
-		if tutorial_clock > 12:
-			tutorial_active = false
-			notify("Consejo: revisa los controles desde la pausa.")
-	else:
-		elapsed += dt
-	var ramp = 1.0 + minf(elapsed / duration,1.0) * .85
-	if not boss.is_empty():
-		ramp = 1.0 + minf(elapsed / 70.0,1.0) * .8
-	var world_dt = dt * (.48 if slow_time > 0 else 1.0)
+	if tutorial_active and guide_page>=0:return
+	sim_time += dt
+	if not tutorial_active:elapsed += dt
+	pressure = World.pressure(selected,elapsed)
+	var world_dt = dt*(.50 if slow_time>0 else 1.0)
 	invincible = maxf(0,invincible-dt)
 	dash_cooldown = maxf(0,dash_cooldown-dt)
 	dash_time = maxf(0,dash_time-dt)
 	shot_cooldown = maxf(0,shot_cooldown-dt)
+	muzzle_flash = maxf(0,muzzle_flash-dt)
+	hurt_flash = maxf(0,hurt_flash-dt)
+	jump_buffer = maxf(0,jump_buffer-dt)
+	drop_timer = maxf(0,drop_timer-dt)
 	slow_time = maxf(0,slow_time-dt)
 	rapid_time = maxf(0,rapid_time-dt)
-	shake = maxf(0,shake-dt*20)
+	shake = maxf(0,shake-dt*24)
+	no_shot_time += dt
 	var axis = test_axis if test_mode else float(down("right"))-float(down("left"))
-	ducking = down("duck") and p.y >= FLOOR-1 and dash_time <= 0
-	if axis != 0:
-		facing = 1 if axis > 0 else -1
-		if tutorial_active and tutorial_step == 0:
-			tutorial_step = 1
-			tutorial_clock = 0
-	if ducking and tutorial_active and tutorial_step == 2:
-		tutorial_step = 3
-		tutorial_clock = 0
-	var target_speed = axis * (77 if ducking else 177)
-	if dash_time > 0:
-		velocity.x = facing * 470
-		if not settings.low:
-			burst(p-Vector2(0,14),Color("a6e4c5"),1)
-	elif zone == 1:
-		velocity.x = move_toward(velocity.x,target_speed,dt*570)
+	ducking = down("duck") and grounded and dash_time<=0
+	if axis!=0:facing = 1 if axis>0 else -1
+	var target_speed = axis*(125 if ducking else 292)
+	if dash_time>0:
+		velocity.x = facing*700
+		if not settings.low:burst(p-Vector2(0,24),Color("a6e4c5"),1)
 	else:
-		velocity.x = move_toward(velocity.x,target_speed,dt*1800)
-	velocity.y += dt * (180 if dash_time > 0 else 850)
-	p += velocity * dt
-	p.x = clampf(p.x,12,628)
-	if p.y >= FLOOR:
-		p.y = FLOOR
+		velocity.x = move_toward(velocity.x,target_speed,dt*(1450 if zone==1 else 2250))
+	var previous = p
+	velocity.y += dt*(160 if dash_time>0 else 1250)
+	p += velocity*dt
+	p.x = clampf(p.x,18,WIDTH-18)
+	grounded = false
+	var landing_y = FLOOR
+	if velocity.y>=0 and drop_timer<=0:
+		for platform in platforms:
+			if p.x>platform.position.x-5 and p.x<platform.end.x+5 and previous.y<=platform.position.y+1 and p.y>=platform.position.y:
+				landing_y = minf(landing_y,platform.position.y)
+	if velocity.y>=0 and p.y>=landing_y:
+		p.y = landing_y
 		velocity.y = 0
 		jumps = 0
-		if p.x < arena_left or p.x > arena_right:
-			hurt("El vacío")
-			if state != "play":
-				return
-			p.x = clampf(p.x,arena_left+24,arena_right-24)
-	if (down("shoot") or settings.auto_fire) and shot_cooldown <= 0:
-		shoot()
-		if tutorial_active and tutorial_step == 3:
-			tutorial_step = 4
-			tutorial_clock = 0
-	if tutorial_before:
-		step_bullets(dt)
-		return
-	spawn_clock -= world_dt
-	enemy_clock -= world_dt
-	gift_clock -= dt
-	if spawn_clock <= 0:
-		spawn_hazard(rng.randi_range(0,2),ramp)
-		spawn_clock = maxf(.32,level_data.interval / ramp)
-	if enemy_clock <= 0:
-		spawn_enemy()
-		enemy_clock = level_data.enemy_interval / sqrt(ramp)
-	if gift_clock <= 0:
-		spawn_pickup()
-		gift_clock = rng.randf_range(7.0,10.0)
-	step_arena(dt)
+		grounded = true
+		coyote = .1
+		if jump_buffer>0:jump()
+	else:
+		coyote = maxf(0,coyote-dt)
+		if coyote<=0 and jumps==0:jumps=1
+	if grounded and p.y==FLOOR and (p.x<arena_left or p.x>arena_right):
+		hurt("El vacío")
+		if state!="play":return
+		p.x=clampf(p.x,arena_left+28,arena_right-28)
+	run_cycle += absf(velocity.x)*dt/23.0
+	aim_direction = aim_vector()
+	if (down("shoot") or settings.auto_fire) and shot_cooldown<=0:shoot()
+	if tutorial_active:
+		step_tutorial(dt)
+	else:
+		spawn_clock -= world_dt
+		enemy_clock -= world_dt
+		gift_clock -= dt
+		if spawn_clock<=0:
+			spawn_wave()
+			spawn_clock += pressure.interval
+		if enemy_clock<=0:
+			spawn_enemy()
+			enemy_clock += pressure.enemy_interval
+		if gift_clock<=0:
+			spawn_pickup()
+			gift_clock = director_rng.randf_range(10,13)
+		step_arena(dt)
+		step_lava(dt)
+		if state!="play":return
 	step_hazards(world_dt)
-	if state != "play":return
-	step_enemies(world_dt,ramp)
-	if state != "play":return
-	step_boss(world_dt,ramp)
+	if state!="play":return
+	step_enemies(world_dt)
+	if state!="play":return
+	step_boss(world_dt)
 	step_bullets(dt)
 	step_pickups(dt)
-	if state != "play":return
+	if state!="play" or tutorial_active:return
 	if level_data.boss:
-		if not boss.is_empty() and boss.hp <= 0:
-			complete_level()
-	elif elapsed >= duration:
-		complete_level()
+		if not boss.is_empty() and boss.hp<=0:complete_level()
+	elif elapsed>=duration:complete_level()
 
 func shoot() -> void:
-	if bullets.size() >= 36:
-		return
-	shot_cooldown = .13 if rapid_time > 0 else .27
-	var origin = p + Vector2(facing*10,-12 if ducking else -21)
-	var target = origin + Vector2(facing*640,0)
-	var best = INF
-	for e in enemies:
-		if e.age < 0:continue
-		var distance = origin.distance_squared_to(e.p)
-		if distance < best:
-			best = distance
-			target = e.p + Vector2(0,-12)
-	if not boss.is_empty() and origin.distance_squared_to(boss.p) < best:
-		target = boss.p
-	var dir = (target-origin).normalized()
-	bullets.append({"p":origin,"v":dir*400,"life":1.8})
+	if bullets.size()>=48:return
+	shot_cooldown = .085 if rapid_time>0 else .155
+	var shoulder = p+Vector2(facing*8,-21 if ducking else -31)
+	aim_direction = aim_vector()
+	var origin = shoulder+aim_direction*31
+	bullets.append({"p":origin,"v":aim_direction*890,"life":1.55})
+	shots_fired += 1
+	no_shot_time = 0
+	muzzle_flash = .075
+	burst(origin,Color("c8fff0"),2)
 	sound("shoot")
 
-func spawn_hazard(kind: int, ramp: float = 1.0, fixed_x: float = -1) -> void:
-	if hazards.size() >= MAX_HAZARDS:return
-	var variant = rng.randi_range(0,15)
-	var x = fixed_x if fixed_x >= 0 else rng.randf_range(arena_left+18,arena_right-18)
-	var speed = level_data.speed * ramp
-	var h = {"kind":kind,"p":Vector2(x,-20),"v":Vector2.ZERO,"wait":.85,"age":0.0,"life":9.0,"variant":variant,"r":9.0,"name":World.ZONES[zone].objects[variant]}
+func aim_vector() -> Vector2:
+	var origin = p+Vector2(0,-24 if ducking else -32)
+	var target = origin+Vector2(facing*1280,0)
+	var nearest = INF
+	# Assist only targets in the forward cone. Turning is an intentional combat action.
+	for e in enemies:
+		if e.state=="spawn":continue
+		var center = e.p-Vector2(0,30)
+		var difference = center-origin
+		if difference.x*facing<=16:continue
+		if absf(difference.y)>absf(difference.x)*1.7:continue
+		var distance = difference.length_squared()
+		if distance<nearest:
+			nearest=distance
+			target=center
+	if not boss.is_empty() and boss.hp>0:
+		var difference=boss.p-origin
+		if difference.x*facing>16 and absf(difference.y)<absf(difference.x)*1.7 and difference.length_squared()<nearest:
+			target=boss.p
+	return (target-origin).normalized()
+
+func spawn_hazard(kind: int, _ramp: float = 1.0, fixed_x: float = -1, options: Dictionary = {}) -> void:
+	if hazards.size()>=MAX_HAZARDS:return
+	var variant = director_rng.randi_range(0,15)
+	var x = fixed_x if fixed_x>=0 else director_rng.randf_range(arena_left+40,arena_right-40)
+	var wait_time = float(options.get("warning",pressure.warning))
+	var h = {"kind":kind,"p":Vector2(x,-26),"base_v":Vector2.ZERO,"v":Vector2.ZERO,"wait":wait_time,"warning":wait_time,"age":0.0,"life":10.0,"variant":variant,"r":12.0,"name":World.ZONES[zone].objects[variant]}
 	match kind:
-		0:
-			h.v = Vector2(rng.randf_range(-8,8),speed*1.2)
+		0:h.base_v=Vector2(0,1.0)
 		1:
-			var left = rng.randf() < .5
-			# Upper projectiles can be crouched under; lower ones require a jump.
-			h.p = Vector2(-18 if left else 658,260 if rng.randf()<.55 else 282)
-			h.v = Vector2(speed*1.6*(1 if left else -1),0)
-			h.wait = .95
+			var from_left = bool(options.get("left",wave_index%2==0))
+			var high = bool(options.get("high",wave_index%3==0))
+			h.p=Vector2(-28 if from_left else WIDTH+28,FLOOR-44 if high else FLOOR-13)
+			h.base_v=Vector2(1.24 if from_left else -1.24,0)
+			h.r=10.0
+			h.name="Ráfaga alta" if high else "Ráfaga baja"
+			if zone==3:
+				h.variant=2 if high else 1
+				h.name=World.ZONES[zone].objects[h.variant]
+				h.half=Vector2(19,5) if high else Vector2(21,18)
+				if not high:h.p.y=FLOOR-18
 		2:
-			h.p = Vector2(x,FLOOR)
-			h.wait = .95
-			h.life = .85
-			h.name = ["Raíces espinosas","Estalagmita","Descarga eléctrica","Pilar de viento","Géiser de lava"][zone]
+			h.p=Vector2(x,FLOOR)
+			h.life=.85
+			h.name=["Raíces espinosas","Estalagmita","Descarga eléctrica","Lanzas de luz","Géiser de lava"][zone]
+		3:
+			h.p=options.get("origin",Vector2(x,FLOOR-40))
+			h.base_v=options.get("direction",Vector2.LEFT)*1.05
+			h.life=7.0
+			h.r=9.0
+			h.name=options.get("name","Flecha angelical" if zone==3 else World.ZONES[zone].enemy)
+			if zone==3:h.half=Vector2(9,9)
+	h.v=h.base_v*pressure.speed
 	hazards.append(h)
 
+func spawn_wave() -> void:
+	var order=[0,1,0,1,0,2] if selected<2 else [0,1,2,0,2,1,0,1]
+	var kind=int(order[wave_index%order.size()])
+	var batch=1+selected/7
+	if kind==1 and side_lane_busy():kind=0
+	var center=director_rng.randf_range(arena_left+140,arena_right-140)
+	# Ground/fall formations always leave a broad escape corridor.
+	escape_x=clampf(p.x+(-150 if wave_index%2==0 else 150),arena_left+110,arena_right-110)
+	if kind==0:
+		if selected>=5 and wave_index%4==0:
+			for lane in range(8):
+				var x=arena_left+48+lane*(arena_right-arena_left-96)/7
+				if absf(x-escape_x)>130:spawn_hazard(0,1,x)
+		else:
+			for k in range(batch):
+				var x=clampf(p.x+90*(k-(batch-1)*.5),arena_left+35,arena_right-35)
+				spawn_hazard(0,1,x)
+	elif kind==1:
+		spawn_hazard(1,1,-1,{"left":wave_index%2==0,"high":wave_index%4==3})
+	else:
+		for k in range(batch+1):
+			var x=clampf(center+(k-batch*.5)*86,arena_left+30,arena_right-30)
+			if absf(x-escape_x)>105:spawn_hazard(2,1,x)
+	wave_index+=1
+	sound("warning")
+	if attack_log.size()<300:attack_log.append({"time":elapsed,"kind":kind,"speed":pressure.speed,"warning":pressure.warning})
+
+func side_lane_busy() -> bool:
+	for h in hazards:
+		if h.kind==1:return true
+	return false
+
 func hazard_rect(h: Dictionary) -> Rect2:
-	if h.kind == 2:
-		return Rect2(h.p.x-10,FLOOR-39,20,39)
-	return Rect2(h.p-Vector2(8,8),Vector2(16,16))
+	if h.kind==2:return Rect2(h.p.x-15,FLOOR-58,30,58)
+	var half=h.get("half",Vector2.ONE*h.r)
+	return Rect2(h.p-half,half*2)
+
+static func segment_hits_rect(from: Vector2, to: Vector2, box: Rect2) -> bool:
+	var delta=to-from
+	var lo=0.0
+	var hi=1.0
+	for axis in range(2):
+		if absf(delta[axis])<.000001:
+			if from[axis]<box.position[axis] or from[axis]>box.end[axis]:return false
+		else:
+			var a=(box.position[axis]-from[axis])/delta[axis]
+			var b=(box.end[axis]-from[axis])/delta[axis]
+			lo=maxf(lo,minf(a,b))
+			hi=minf(hi,maxf(a,b))
+			if lo>hi:return false
+	return true
 
 func step_hazards(dt: float) -> void:
 	for i in range(hazards.size()-1,-1,-1):
-		var h = hazards[i]
-		if h.wait > 0:
-			h.wait -= dt
+		var h=hazards[i]
+		if h.wait>0:
+			h.wait=maxf(0,h.wait-dt)
 			continue
-		h.age += dt
-		h.life -= dt
-		h.p += h.v * dt
-		if h.kind == 0 and h.p.y > FLOOR-5:
-			burst(h.p,Color(World.ZONES[zone].color),5)
-			hazards.remove_at(i)
-			continue
-		if h.life <= 0 or h.p.x < -45 or h.p.x > 685:
-			hazards.remove_at(i)
-			continue
-		if player_rect().intersects(hazard_rect(h)):
+		h.age+=dt
+		h.life-=dt
+		h.v=h.base_v*pressure.speed
+		var previous=h.p
+		h.p+=h.v*dt
+		var half=h.get("half",Vector2.ONE*h.r)
+		var collision=player_rect().intersects(hazard_rect(h)) if h.kind==2 else segment_hits_rect(previous,h.p,player_rect().grow_individual(half.x,half.y,half.x,half.y))
+		if collision:
 			hurt(h.name)
-			if state != "play":return
+			if state!="play":return
+			if h.kind!=2:
+				burst(h.p,Color("ffb787"),7)
+				hazards.remove_at(i)
+				continue
+		if h.life<=0 or h.p.x< -60 or h.p.x>WIDTH+60 or h.p.y>FLOOR+5 or (h.kind==0 and h.p.y>FLOOR-3):
+			if h.p.y>FLOOR-5:burst(Vector2(h.p.x,FLOOR),Color("ffb787"),7)
+			hazards.remove_at(i)
 
-func spawn_enemy() -> void:
-	if enemies.size() >= 6:return
-	var left = rng.randf() < .5
-	var flying = zone in [2,3] or rng.randf() < .25
-	enemies.append({"p":Vector2(38 if left else 602,215 if flying else FLOOR),"hp":2+zone/2,"age":-.9,"dir":1 if left else -1,"flying":flying,"shot":2.8,"flash":0.0,"seed":rng.randf()*6})
+func spawn_enemy(role: int = -1, practice: bool = false) -> void:
+	if enemies.size()>=level_data.enemy_limit and not practice:return
+	if role<0:role=director_rng.randi_range(0,0 if selected<2 else 1 if selected<5 else 2)
+	var from_left=p.x>WIDTH*.5
+	var x=70.0 if from_left else WIDTH-70.0
+	if practice:x=clampf(p.x+240,180,1100)
+	var flying=role==2
+	var life=4+selected/6
+	enemies.append({"p":Vector2(x,FLOOR-157 if flying else FLOOR),"hp":life,"max_hp":life,"age":0.0,"dir":1 if from_left else -1,"flying":flying,"role":role,"state":"spawn","timer":1.1,"flash":0.0,"phase":director_rng.randf()*6,"locked":Vector2.LEFT,"practice":practice,"burst_left":0})
 
-func step_enemies(dt: float, ramp: float) -> void:
-	for i in range(enemies.size()-1,-1,-1):
-		var e = enemies[i]
-		e.age += dt
-		e.flash = maxf(0,e.flash-dt)
-		if e.age < 0:continue
-		e.p.x += e.dir*(19+zone*4)*dt
-		if e.p.x > arena_right-15:e.dir = -1
-		if e.p.x < arena_left+15:e.dir = 1
-		if e.flying:e.p.y = 211+sin(elapsed*2+e.seed)*18
-		e.shot -= dt
-		if e.shot <= 0 and hazards.size()<MAX_HAZARDS:
-			var dir = (p-Vector2(0,20)-e.p).normalized()
-			hazards.append({"kind":3,"p":e.p-Vector2(0,14),"v":dir*(80+zone*9)*sqrt(ramp),"wait":.65,"age":0.0,"life":7.0,"variant":3,"r":7.0,"name":World.ZONES[zone].enemy})
-			e.shot = 3.2/sqrt(ramp)
-		if player_rect().intersects(Rect2(e.p-Vector2(11,25),Vector2(22,25))):
-			hurt(World.ZONES[zone].enemy)
-			if state != "play":return
+func step_enemies(dt: float, _ramp: float = 1.0) -> void:
+	for e in enemies:
+		e.age+=dt
+		e.flash=maxf(0,e.flash-dt)
+		e.timer-=dt
+		if e.state=="spawn":
+			if e.timer<=0:
+				e.state="patrol"
+				e.timer=1.9
+			continue
+		var toward=signf(p.x-e.p.x)
+		if absf(p.x-e.p.x)>12 and e.state not in ["windup","charge"]:e.dir=int(toward)
+		if e.flying:e.p.y=FLOOR-158+sin(sim_time*1.7+e.phase)*24
+		if e.state=="patrol":
+			if not e.practice and absf(p.x-e.p.x)>225:e.p.x+=e.dir*(25+pressure.rate*12)*dt
+			if e.timer<=0 and not e.practice:
+				e.state="windup"
+				e.timer=maxf(.86,pressure.warning)
+				e.locked=(p-Vector2(0,25)- (e.p-Vector2(0,32))).normalized()
+				sound("warning")
+		elif e.state=="windup" and e.timer<=0:
+			if e.role==1:
+				e.state="charge"
+				e.timer=.60
+				e.locked=Vector2(signf(e.locked.x),0)
+			else:
+				e.state="attack"
+				e.timer=.22
+				enemy_fire(e)
+		elif e.state=="attack" and e.timer<=0:
+			e.state="recovery"
+			e.timer=1.0
+		elif e.state=="charge":
+			e.p.x+=e.locked.x*(260+pressure.rate*65)*dt
+			if e.timer<=0 or e.p.x<arena_left+28 or e.p.x>arena_right-28:
+				e.state="recovery"
+				e.timer=1.0
+		elif e.state=="recovery" and e.timer<=0:
+			e.state="patrol"
+			e.timer=maxf(.9,2.7-pressure.rate*.37)
+		e.p.x=clampf(e.p.x,arena_left+25,arena_right-25)
+		if player_rect().intersects(Rect2(e.p-Vector2(21,49),Vector2(42,49))):
+			hurt(World.enemy_name(selected,e.role))
+			if state!="play":return
 
-func step_boss(dt: float, ramp: float) -> void:
+func enemy_fire(e: Dictionary) -> void:
+	var origin=e.p-Vector2(0,31)
+	spawn_hazard(3,1,-1,{"origin":origin,"direction":e.locked,"warning":0.0,"name":"Flecha angelical" if zone==3 else World.enemy_name(selected,e.role)})
+	if selected>=10 and e.role==2:
+		spawn_hazard(3,1,-1,{"origin":origin,"direction":e.locked.rotated(.22),"warning":0.0})
+	burst(origin,Color("ffb787"),9)
+	sound("shoot")
+
+func step_boss(dt: float, _ramp: float = 1.0) -> void:
 	if boss.is_empty():return
-	boss.p = Vector2(477+sin(elapsed*.7)*52,130+sin(elapsed*1.4)*24)
-	boss.flash = maxf(0,boss.flash-dt)
-	var phase = 2 if boss.hp < boss.max_hp*.5 else 1
-	if phase != boss.phase:
-		boss.phase = phase
-		notify("¡FASE 2! " + World.ZONES[zone].boss)
-		sound("warning")
-		burst(boss.p,Color(World.ZONES[zone].color),25)
-	boss_clock -= dt
-	if boss_clock > 0:return
-	boss_clock = (3.0 if phase == 1 else 2.15)/sqrt(ramp)
-	boss_pattern += 1
-	# Each biome has a different signature plus a shared readable fan pattern.
-	if boss_pattern%3 == 0:
-		for k in range(5+phase):
-			if hazards.size()>=MAX_HAZARDS:break
-			var angle = PI*.26 + k*PI*.52/(4+phase)
-			hazards.append({"kind":3,"p":boss.p+Vector2(0,25),"v":Vector2(cos(angle),sin(angle))*(80+zone*10),"wait":.8,"age":0.0,"life":7.0,"variant":zone+8,"r":7.0,"name":World.ZONES[zone].boss})
+	boss.p=Vector2(948+sin(sim_time*.48)*97,265+sin(sim_time*.92)*28)
+	boss.flash=maxf(0,boss.flash-dt)
+	var phase=2 if boss.hp<boss.max_hp*.5 else 1
+	if phase!=boss.phase:
+		boss.phase=phase
+		notify("El jefe prepara nuevos patrones. Sigue leyendo las alertas.")
+	boss.blend=move_toward(boss.blend,1.0 if phase==2 else 0.0,dt*.2)
+	if boss.state=="windup":
+		boss.timer-=dt
+		if boss.timer<=0:
+			boss.state="attack"
+			boss.timer=.30
+			boss_attack()
+	elif boss.state=="attack":
+		boss.timer-=dt
+		if boss.timer<=0:boss.state="idle"
+	else:
+		boss_clock-=dt
+		if boss_clock<=0:
+			boss.state="windup"
+			boss.timer=1.15
+			boss_clock=maxf(2.5,5.0-pressure.rate*.43-boss.blend*.35)
+			sound("warning")
+
+func boss_attack() -> void:
+	boss_pattern+=1
+	var warning=maxf(.88,pressure.warning)
+	if boss_pattern%3==0:
+		# Open fan, always with spaces; no circular wall closing on the player.
+		var count=5+zone
+		for k in range(count):
+			var angle=.18*PI+k*.64*PI/(count-1)
+			spawn_hazard(3,1,-1,{"origin":boss.p+Vector2(0,40),"direction":Vector2(cos(angle),sin(angle)),"warning":warning,"name":World.ZONES[zone].boss})
 	else:
 		match zone:
 			0:
-				for k in range(3+phase):spawn_hazard(0,ramp,clampf(p.x-65+k*36,40,600))
+				for k in range(4):spawn_hazard(0,1,clampf(p.x-140+k*90,80,1200),{"warning":warning})
 			1:
-				for k in range(3+phase):spawn_hazard(2,ramp,65+k*112)
+				escape_x=clampf(p.x+120,180,1100)
+				for k in range(8):
+					var x=100+k*150
+					if absf(x-escape_x)>140:spawn_hazard(2,1,x,{"warning":warning})
 			2:
-				for k in range(2+phase):spawn_hazard(1,ramp)
+				if not side_lane_busy():spawn_hazard(1,1,-1,{"left":boss_pattern%2==0,"high":boss_pattern%2==1,"warning":warning})
+				for k in range(3):spawn_hazard(0,1,260+k*330,{"warning":warning})
 			3:
-				for k in range(3+phase):spawn_hazard(0,ramp,80+k*105)
-				spawn_enemy()
+				for k in range(7):
+					var x=120+k*170
+					if absf(x-p.x)>115:spawn_hazard(0,1,x,{"warning":warning})
+				spawn_enemy(2)
 			4:
-				for k in range(3):spawn_hazard(2,ramp,clampf(p.x-75+k*75,40,600))
-				spawn_hazard(1,ramp)
+				escape_x=clampf(p.x+(-160 if boss_pattern%2 else 160),190,1090)
+				for k in range(7):
+					var x=130+k*170
+					if absf(x-escape_x)>145:spawn_hazard(2 if boss_pattern%2==0 else 0,1,x,{"warning":warning})
+	burst(boss.p+Vector2(0,50),Color("ffb787"),14)
 
 func step_bullets(dt: float) -> void:
 	for i in range(bullets.size()-1,-1,-1):
-		var b = bullets[i]
-		b.p += b.v*dt
-		b.life -= dt
-		var consumed = false
+		var b=bullets[i]
+		var previous=b.p
+		b.p+=b.v*dt
+		b.life-=dt
+		var consumed=false
 		for j in range(enemies.size()-1,-1,-1):
-			var e = enemies[j]
-			if e.age >= 0 and Rect2(e.p-Vector2(14,28),Vector2(28,32)).grow(3).has_point(b.p):
-				e.hp -= 1
-				e.flash = .1
-				burst(b.p,Color("ffe4af"),4)
-				consumed = true
-				if e.hp <= 0:
-					kills += 1
-					score += 100
-					floating(e.p,"+100",Color("a6e4c5"))
-					burst(e.p,Color(World.ZONES[zone].color),12)
+			var e=enemies[j]
+			if e.state=="spawn":continue
+			if segment_hits_rect(previous,b.p,Rect2(e.p-Vector2(24,55),Vector2(48,56)).grow(3)):
+				e.hp-=1
+				e.flash=.095
+				burst(b.p,Color("ffe4af"),7)
+				consumed=true
+				if e.hp<=0:
+					kills+=1
+					score+=100
+					floating(e.p-Vector2(0,55),"+100",Color("a6e4c5"))
+					burst(e.p-Vector2(0,25),Color("ffbd8b"),18)
+					var practice=bool(e.practice)
 					enemies.remove_at(j)
+					if practice and tutorial_active and tutorial_step==3:advance_tutorial()
 				break
-		if not consumed and not boss.is_empty() and Rect2(boss.p-Vector2(35,33),Vector2(70,70)).has_point(b.p):
-			boss.hp -= 1
-			boss.flash = .08
-			consumed = true
-			burst(b.p,Color("ffe4af"),3)
-		if consumed or b.life <= 0 or b.p.x < -20 or b.p.x > 660 or b.p.y < -30:
+		if not consumed and not boss.is_empty() and segment_hits_rect(previous,b.p,Rect2(boss.p-Vector2(64,63),Vector2(128,138))):
+			boss.hp-=1
+			boss.flash=.075
+			consumed=true
+			burst(b.p,Color("ffe4af"),5)
+		if consumed or b.life<=0 or b.p.x< -30 or b.p.x>WIDTH+30 or b.p.y< -30:
 			bullets.remove_at(i)
 
 func spawn_pickup(forced: String = "") -> void:
 	if pickups.size()>=5:return
-	var kind = forced
+	var kind=forced
 	if kind.is_empty():
-		var choices = ["shield","heal","slow","rapid"]
-		kind = choices[rng.randi_range(0,3)]
-	pickups.append({"p":Vector2(rng.randf_range(arena_left+32,arena_right-32),-12),"kind":kind,"life":12.0,"landed":false})
+		var choices=["shield","heal","slow","rapid"]
+		kind=choices[director_rng.randi_range(0,3)]
+	pickups.append({"p":Vector2(director_rng.randf_range(arena_left+65,arena_right-65),115),"kind":kind,"life":13.0})
 
 func apply_pickup(kind: String) -> void:
 	match kind:
@@ -571,60 +781,109 @@ func apply_pickup(kind: String) -> void:
 
 func step_pickups(dt: float) -> void:
 	for i in range(pickups.size()-1,-1,-1):
-		var gift = pickups[i]
-		gift.life -= dt
-		gift.p.y = minf(FLOOR-14,gift.p.y+72*dt)
-		if player_rect().grow(8).has_point(gift.p):
-			apply_pickup(gift.kind)
+		var gift=pickups[i]
+		gift.life-=dt
+		gift.p.y=minf(FLOOR-22,gift.p.y+108*dt)
+		if player_rect().grow(15).has_point(gift.p):
+			var kind=gift.kind
 			pickups.remove_at(i)
-		elif gift.life <= 0:
-			pickups.remove_at(i)
+			apply_pickup(kind)
+			if tutorial_active and tutorial_step==5:finish_tutorial()
+		elif gift.life<=0:pickups.remove_at(i)
 
 func step_arena(dt: float) -> void:
 	if not level_data.shrink:return
-	arena_clock -= dt
-	if arena_phase == "stable" and arena_clock <= 0:
-		arena_phase = "warning"
-		arena_timer = 1.25
-		var inset = 65 + level_data.part*19 + zone*7
-		target_left = float(inset)
-		target_right = 640.0-inset
-		notify("¡CUIDADO! Los bordes desaparecen.")
+	arena_clock-=dt
+	if arena_phase=="stable" and arena_clock<=0:
+		arena_phase="warning"
+		arena_timer=1.65
+		target_left=level_data.terrain_inset
+		target_right=WIDTH-level_data.terrain_inset
 		sound("warning")
-	elif arena_phase == "warning":
-		arena_timer -= dt
-		if arena_timer <= 0:
-			arena_phase = "small"
-			arena_timer = 6
-			arena_left = target_left
-			arena_right = target_right
-			shake = 2
-	elif arena_phase == "small":
-		arena_timer -= dt
-		if arena_timer <= 0:
-			arena_phase = "stable"
-			arena_clock = 10
-			arena_left = 24
-			arena_right = 616
-			notify("El terreno vuelve. Por ahora.")
+	elif arena_phase=="warning":
+		arena_timer-=dt
+		if arena_timer<=0:
+			arena_phase="shrinking"
+			arena_timer=.7
+	elif arena_phase=="shrinking":
+		arena_timer-=dt
+		var t=clampf(1-arena_timer/.7,0,1)
+		arena_left=lerpf(36,target_left,t)
+		arena_right=lerpf(WIDTH-36,target_right,t)
+		if arena_timer<=0:
+			arena_phase="small"
+			arena_timer=6.0
+	elif arena_phase=="small":
+		arena_timer-=dt
+		if arena_timer<=0:
+			arena_phase="restoring"
+			arena_timer=.8
+	elif arena_phase=="restoring":
+		arena_timer-=dt
+		var t=clampf(1-arena_timer/.8,0,1)
+		arena_left=lerpf(target_left,36,t)
+		arena_right=lerpf(target_right,WIDTH-36,t)
+		if arena_timer<=0:
+			arena_phase="stable"
+			arena_left=36
+			arena_right=WIDTH-36
+			arena_clock=maxf(9,15-selected*.25)
+
+func ignite_floor(center_x: float = -1) -> void:
+	if not level_data.lava or not lava_patches.is_empty():return
+	var width=156.0+level_data.part*12.0
+	var center=p.x if center_x<0 else center_x
+	center=clampf(center,arena_left+width*.5+35,arena_right-width*.5-35)
+	# One local patch, never the whole arena: either side and the ledges stay usable.
+	lava_patches.append({"rect":Rect2(center-width*.5,FLOOR-3,width,13),"state":"warning","timer":1.8,"duration":1.8})
+	sound("warning")
+
+func step_lava(dt: float) -> void:
+	if not level_data.lava:return
+	lava_clock-=dt
+	if lava_clock<=0 and lava_patches.is_empty():
+		ignite_floor()
+		lava_clock=8.0-level_data.part*.45
+	for i in range(lava_patches.size()-1,-1,-1):
+		var patch=lava_patches[i]
+		patch.timer-=dt
+		if patch.timer<=0:
+			if patch.state=="warning":
+				patch.state="active"
+				patch.timer=2.8
+			elif patch.state=="active":
+				patch.state="cooling"
+				patch.timer=.65
+			else:
+				lava_patches.remove_at(i)
+				continue
+		if patch.state=="active" and grounded and p.y>=FLOOR-1 and p.x>patch.rect.position.x-7 and p.x<patch.rect.end.x+7:
+			hurt("Suelo de lava")
+			if state!="play":return
 
 func hurt(source: String) -> void:
-	if invincible > 0 or state != "play":return
-	if shield > 0:
-		shield = 0
-		invincible = 1.2
-		burst(p-Vector2(0,15),Color("8ce5df"),18)
+	if invincible>0 or state!="play":return
+	if tutorial_active:
+		invincible=.8
+		hurt_flash=.08
+		notify("Esto es una práctica: lee la señal amarilla antes de esquivar.")
+		return
+	if shield>0:
+		shield=0
+		invincible=1.0
+		burst(p-Vector2(0,26),Color("8ce5df"),18)
 		sound("pickup")
 		return
-	hp -= 1
-	hits += 1
-	invincible = 1.65
-	shake = 4
-	damage_source = source
-	burst(p-Vector2(0,15),Color("f47d7b"),18)
+	hp-=1
+	hits+=1
+	invincible=1.4
+	hurt_flash=.11
+	shake=3
+	damage_source=source
+	burst(p-Vector2(0,26),Color("f47d7b"),18)
 	sound("hit")
-	if hp <= 0:
-		death_message = World.TAUNTS[rng.randi_range(0,World.TAUNTS.size()-1)] if settings.taunts else "Cada intento cuenta. ¡Puedes lograrlo!"
+	if hp<=0:
+		death_message=World.TAUNTS[rng.randi_range(0,World.TAUNTS.size()-1)] if settings.taunts else "Cada intento cuenta. ¡Puedes lograrlo!"
 		change_state("dead")
 		sound("lose")
 
@@ -637,7 +896,7 @@ func complete_level() -> void:
 	save_progress()
 	change_state("victory")
 	sound("win")
-	burst(Vector2(320,150),Color("f6ba70"),50)
+	burst(Vector2(640,300),Color("f6ba70"),50)
 
 func burst(at: Vector2, color: Color, count: int) -> void:
 	if settings.low:count = int(ceil(count*.4))
@@ -664,6 +923,7 @@ func _draw() -> void:
 
 func _exit_tree() -> void:
 	if painter:
+		painter.combat.g = null
 		painter.g = null
 		painter = null
 	if music:
@@ -711,7 +971,7 @@ func refresh_touches() -> void:
 	touch_was_dash = d
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion:pointer = get_global_mouse_position()
+	if event is InputEventMouseMotion:pointer = get_global_mouse_position() / UI_SCALE
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_ESCAPE, KEY_P:
@@ -724,7 +984,8 @@ func _input(event: InputEvent) -> void:
 			KEY_SHIFT, KEY_K, KEY_X:
 				if state == "play":dash()
 			KEY_ENTER:
-				if state == "title":change_state("map")
+				if state == "play" and tutorial_active and guide_page>=0:activate("guide_next")
+				elif state == "title":change_state("map")
 				elif state == "map" and selected <= unlocked:begin_level(selected)
 				elif state == "dead":begin_level(selected)
 				elif state == "victory":activate("next")
@@ -736,7 +997,7 @@ func _input(event: InputEvent) -> void:
 			KEY_RIGHT,KEY_D:
 				if state == "map":selected = mini(19,selected+1)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		pointer = get_global_mouse_position()
+		pointer = get_global_mouse_position() / UI_SCALE
 		if event.pressed:
 			if state == "play" and settings.touch:
 				mouse_action = touch_action(pointer)
@@ -748,14 +1009,14 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			if not settings.touch:settings.touch = true
 			if state == "play":
-				touches[event.index] = event.position
+				touches[event.index] = event.position / UI_SCALE
 				refresh_touches()
-			click_at(event.position)
+			click_at(event.position / UI_SCALE)
 		else:
 			touches.erase(event.index)
 			refresh_touches()
 	if event is InputEventScreenDrag and state == "play":
-		touches[event.index] = event.position
+		touches[event.index] = event.position / UI_SCALE
 		refresh_touches()
 
 func click_at(at: Vector2) -> void:
@@ -791,46 +1052,122 @@ func activate(action: String) -> void:
 			return_state = state
 			change_state("settings")
 		"back":change_state(return_state)
-		"skip_tutorial":tutorial_active = false
+		"skip_tutorial":finish_tutorial()
+		"guide_next":
+			if tutorial_active:
+				guide_page+=1
+				if guide_page>=3:guide_page=-1
 		"quit":quit_cleanly()
 
 func setup_showcase() -> void:
-	var screen = "title"
-	var which = 0
+	var screen="title"
+	var which=0
 	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--screen="):screen = arg.trim_prefix("--screen=")
-		if arg.begins_with("--level="):which = int(arg.trim_prefix("--level="))
-		if arg == "--touch":settings.touch = true
-	if screen == "map":
-		unlocked = 19
-		selected = which
-		for k in range(which):medals[str(k)] = 3 if k%3==0 else 2
+		if arg.begins_with("--screen="):screen=arg.trim_prefix("--screen=")
+		if arg.begins_with("--level="):which=int(arg.trim_prefix("--level="))
+		if arg=="--touch":settings.touch=true
+	if screen=="map":
+		unlocked=19
+		selected=which
+		for k in range(which):medals[str(k)]=3 if k%3==0 else 2
 		change_state("map")
 	elif screen in ["play","dead","victory","loading"]:
 		begin_level(which)
 		change_state(screen)
-		elapsed = 21
-		p = Vector2(244,272)
-		velocity = Vector2(90,-30)
-		invincible = 0
-		shield = 1
-		for i in range(6):
-			spawn_hazard(0,1,80+i*83)
-			hazards[-1].wait = 0
-			hazards[-1].p.y = 86+i%3*43
-		spawn_hazard(2,1,350)
-		hazards[-1].wait = 0
-		spawn_hazard(2,1,128)
-		spawn_hazard(1)
+		elapsed=24
+		pressure=World.pressure(which,elapsed)
+		p=Vector2(490,540)
+		velocity=Vector2(170,-30)
+		facing=1
+		grounded=false
+		invincible=0
+		shield=1
+		for i in range(4):
+			spawn_hazard(0,1,260+i*220)
+			hazards[-1].wait=0 if i%2 else pressure.warning*.65
+			if i%2:hazards[-1].p.y=270+i*40
+		spawn_hazard(2,1,690)
+		spawn_hazard(1,1,-1,{"left":false,"high":false})
+		if zone==3:
+			hazards[-1].wait=0
+			hazards[-1].p.x=994
+		if zone==4:
+			ignite_floor(370)
+			lava_patches[0].state="active"
+			lava_patches[0].timer=2.0
 		for i in range(2):
-			spawn_enemy()
-			enemies[-1].age = 1
-			enemies[-1].p = Vector2(410+i*140,FLOOR)
+			spawn_enemy(i,true)
+			enemies[-1].practice=false
+			enemies[-1].state="windup" if i==0 else "patrol"
+			enemies[-1].timer=.5
+			enemies[-1].p=Vector2(850+i*275,FLOOR)
+			enemies[-1].locked=Vector2(-1,-.1).normalized()
+		if zone==3:
+			spawn_enemy(2,true)
+			enemies[-1].practice=false
+			enemies[-1].state="attack"
+			enemies[-1].p=Vector2(1065,FLOOR-157)
+			spawn_hazard(3,1,-1,{"origin":Vector2(980,438),"direction":Vector2(-1,.14).normalized(),"warning":0.0})
 		spawn_pickup("heal")
-		pickups[-1].p = Vector2(290,171)
-		for i in range(4):bullets.append({"p":Vector2(280+i*25,246-i*9),"v":Vector2(100,0),"life":1.0})
-		death_message = World.TAUNTS[3]
-		damage_source = World.ZONES[zone].objects[2]
-		result_stars = 3
-		tutorial_active = false
+		pickups[-1].p=Vector2(620,390)
+		aim_direction=aim_vector()
+		muzzle_flash=.07
+		for i in range(4):bullets.append({"p":Vector2(540+i*60,515+i*8),"v":Vector2(890,100),"life":1.0})
+		death_message=World.TAUNTS[3]
+		damage_source=World.ZONES[zone].objects[2]
+		result_stars=3
+		tutorial_active=false
 	else:change_state(screen)
+
+func _physics_process(dt: float) -> void:
+	if state=="play" and not capture_mode:
+		step_game(dt)
+		step_particles(dt)
+
+func step_tutorial(dt: float) -> void:
+	if guide_page>=0:return
+	tutorial_clock+=dt
+	tutorial_phase_time+=dt
+	match tutorial_step:
+		0:
+			if absf(p.x-tutorial_origin.x)>65:advance_tutorial()
+		1:
+			if jumps>=2:advance_tutorial()
+		2:
+			if ducking:
+				tutorial_distance+=dt
+				if tutorial_distance>.55:advance_tutorial()
+		3:
+			if enemies.is_empty():spawn_enemy(0,true)
+		4:pass
+		5:pass
+	# Repeat one isolated, readable demonstration. No timer can skip the teaching.
+	if tutorial_step in [1,2,4] and hazards.is_empty() and tutorial_phase_time>1:
+		if tutorial_step==1:spawn_hazard(1,1,-1,{"left":true,"high":false,"warning":2.0})
+		elif tutorial_step==2:spawn_hazard(1,1,-1,{"left":false,"high":true,"warning":2.0})
+		else:spawn_hazard(2,1,p.x,{"warning":2.0})
+
+func advance_tutorial() -> void:
+	tutorial_step+=1
+	tutorial_phase_time=0
+	tutorial_distance=0
+	hazards.clear()
+	if tutorial_step==3:spawn_enemy(0,true)
+	if tutorial_step==5:
+		spawn_pickup("shield")
+		pickups[-1].p=Vector2(clampf(p.x+110,100,1180),FLOOR-115)
+	sound("pickup")
+
+func finish_tutorial() -> void:
+	tutorial_active=false
+	guide_page=-1
+	tutorial_seen=true
+	hazards.clear()
+	enemies.clear()
+	hp=3
+	elapsed=0
+	invincible=1.2
+	spawn_clock=2.5
+	enemy_clock=8
+	save_progress()
+	notify("¡Listo! La arena acelera poco a poco. Mantén J para disparar.")

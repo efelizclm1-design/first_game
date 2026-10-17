@@ -1,5 +1,6 @@
 extends RefCounted
 ## Immediate-mode pixel UI. No Control tree churn, shaders, or dynamic lights.
+const Combat = preload("res://scripts/combat_painter.gd")
 const World = preload("res://scripts/world.gd")
 const INK = Color("101726")
 const PANEL = Color("182333")
@@ -9,9 +10,11 @@ const MUTED = Color("9aa9b6")
 const MINT = Color("a6e4c5")
 const CORAL = Color("ef827b")
 var g
+var combat
 
 func _init(game) -> void:
 	g = game
+	combat = Combat.new(game)
 
 func rect(x: float,y: float,w: float,h: float,c: Color) -> void:
 	g.draw_rect(Rect2(floor(x),floor(y),w,h),c)
@@ -69,6 +72,7 @@ func heart(at: Vector2,c: Color,scale: int=1) -> void:
 			if pattern[y][x]=="1":rect(at.x+x*scale,at.y+y*scale,scale,scale,c)
 
 func paint() -> void:
+	g.draw_set_transform(Vector2.ZERO,0,Vector2(2,2))
 	g.buttons.clear()
 	rect(0,0,640,360,INK)
 	match g.state:
@@ -107,11 +111,11 @@ func title() -> void:
 	for i in range(10):rect(i*34,0,34,360,Color(.045,.065,.105,.94-i*.065))
 	rect(0,0,640,34,Color(.04,.06,.10,.75))
 	star(Vector2(25,17),MINT,3)
-	text("UN PEQUEÑO GUARDIÁN. UNA LARGA NOCHE.",37,21,9,MUTED)
+	text("UN PEQUEÑO GUARDIÁN. VEINTE GRANDES LÍOS.",37,21,9,MUTED)
 	text("VOL. 01 / LA MALDICIÓN",476,21,8,Color("b2999d"))
 	tex("logo",Rect2(28,65,278,119))
 	text("VEINTE ARENAS. TRES CORAZONES.",48,207,10,CREAM)
-	text("La oscuridad también sabe reír.",48,224,10,MUTED)
+	text("Hasta el paraíso tiene sus trampas.",48,224,10,MUTED)
 	button("CONTINUAR LA AVENTURA  >" if g.unlocked>0 else "EMPEZAR LA AVENTURA  >",Rect2(48,243,243,34),"map",true)
 	button("AJUSTES Y CONTROLES",Rect2(48,288,243,28),"settings")
 	# Hero and a magic doorway are part of the actual title scene.
@@ -193,7 +197,7 @@ func world_map() -> void:
 
 func loading() -> void:
 	var c = Color(World.ZONES[g.zone].color)
-	tex("zone_%d" % g.zone,Rect2(0,0,640,360),Color(.34,.38,.47))
+	g.draw_texture_rect(g.scene_texture,Rect2(0,0,640,360),false,Color(.34,.38,.47))
 	rect(0,0,640,360,Color(.03,.05,.09,.4))
 	text("PREPARANDO EL DESASTRE",42,51,10,c)
 	text("%02d" % (g.selected+1),40,114,50,CREAM)
@@ -224,191 +228,7 @@ func hero(at: Vector2,scale: float=1.0,portrait: bool=false) -> void:
 		star(at+Vector2(20,-31),MINT,2)
 
 func arena() -> void:
-	var c = Color(World.ZONES[g.zone].color)
-	var shake_offset = Vector2.ZERO if g.settings.low else Vector2(sin(g.clock*70),cos(g.clock*91))*g.shake
-	g.draw_set_transform(shake_offset.floor())
-	tex("zone_%d" % g.zone,Rect2(0,0,640,360))
-	ambient(g.zone)
-	# Additional scenery differentiates the four arenas within each zone.
-	for k in range(g.level_data.get("part",0)):
-		var x = 210+k*83
-		line(Vector2(x,294),Vector2(x,276-k*3),c.darkened(.4),3)
-		diamond(Vector2(x,272-k*3),4,c.darkened(.2))
-	if g.arena_phase == "warning":
-		for r in [Rect2(0,284,g.target_left,15),Rect2(g.target_right,284,640-g.target_right,15)]:
-			g.draw_rect(r,Color(.9,.25,.3,.3+sin(g.clock*20)*.1))
-			for x in range(int(r.position.x),int(r.end.x),12):line(Vector2(x,294),Vector2(x+7,286),CORAL,2)
-		center("¡ATRÁS!",g.target_left/2,276,9,CREAM)
-		center("¡ATRÁS!",(g.target_right+640)/2,276,9,CREAM)
-	if g.arena_phase == "small":
-		rect(0,294,g.arena_left,66,Color("0b0f1e"))
-		rect(g.arena_right,294,640-g.arena_right,66,Color("0b0f1e"))
-		line(Vector2(g.arena_left,294),Vector2(g.arena_left,326),c,2)
-		line(Vector2(g.arena_right,294),Vector2(g.arena_right,326),c,2)
-		for i in range(6):
-			rect(10+i*11,315+i%3*12,3,2,c.darkened(.5))
-			rect(575+i*11,315+i%3*12,3,2,c.darkened(.5))
-	if not g.boss.is_empty():boss_art()
-	for h in g.hazards:hazard(h,c)
-	for e in g.enemies:enemy(e,c)
-	for gift in g.pickups:pickup(gift)
-	for b in g.bullets:
-		var dir = b.v.normalized()
-		line(b.p-dir*8,b.p,MINT,2)
-		rect(b.p.x-1,b.p.y-1,3,3,CREAM)
-	# Small flat shadow; no expensive dynamic lighting.
-	rect(g.p.x-12,g.FLOOR-1,24,3,Color(.03,.04,.07,.65))
-	hero(g.p)
-	for q in g.particles:rect(q.p.x,q.p.y,2,2,q.c)
-	for f in g.floaters:center(f.text,f.p.x,f.p.y,9,f.c)
-	g.draw_set_transform(Vector2.ZERO)
-	hud()
-	if g.settings.touch:touch_controls()
-	else:
-		rect(0,337,640,23,Color(.035,.05,.08,.88))
-		center("A D  MOVER    ESPACIO  SALTO ×2    S  AGACHAR    J  DISPARAR    SHIFT  IMPULSO",320,351,8,MUTED)
-	if g.tutorial_active and g.state=="play":tutorial()
-
-func hazard(h: Dictionary,c: Color) -> void:
-	if h.wait>0:
-		var pulse = .4+abs(sin(g.clock*10))*.4
-		if h.kind==0:
-			line(Vector2(h.p.x,60),Vector2(h.p.x,286),Color(c,.12))
-			g.draw_arc(Vector2(h.p.x,290),12,PI,TAU,12,Color(c,pulse),2,false)
-			text("!",h.p.x-2,278,10,c)
-		elif h.kind==1:
-			var x = 12 if h.p.x<0 else 619
-			text(">>" if h.p.x<0 else "<<",x,h.p.y+3,10,CORAL)
-		elif h.kind==2:
-			line(Vector2(h.p.x-15,291),Vector2(h.p.x+15,291),CORAL,2)
-			text("!",h.p.x-2,280,12,CORAL)
-		else:
-			diamond(h.p,5,Color(c,pulse))
-		return
-	if h.kind==2:
-		for j in range(3):
-			var x = h.p.x-10+j*8
-			var height = 31 if j!=1 else 43
-			g.draw_colored_polygon(PackedVector2Array([Vector2(x-5,294),Vector2(x,294-height),Vector2(x+6,294)]),c.darkened(.3))
-			line(Vector2(x,293-height),Vector2(x+3,288),c)
-	elif h.kind==3:
-		diamond(h.p,7,c.darkened(.4))
-		diamond(h.p,4,c)
-		rect(h.p.x-1,h.p.y-1,2,2,CREAM)
-	else:
-		if not g.settings.low:
-			var dir = h.v.normalized()
-			line(h.p-dir*14,h.p-dir*7,Color(c,.3),2)
-		g.draw_texture_rect_region(g.textures["hazards_%d" % g.zone],Rect2((h.p-Vector2(12,12)).floor(),Vector2(24,24)),Rect2(h.variant*24,0,24,24))
-
-func enemy(e: Dictionary,c: Color) -> void:
-	var p = e.p.floor()
-	if e.age<0:
-		g.draw_arc(p-Vector2(0,10),16,0,TAU,12,Color(c,.5),1,false)
-		center("!",p.x,p.y-5,13,c)
-		return
-	var tint = Color.WHITE if e.flash>0 else c
-	if e.flying:
-		var flap = int(sin(g.clock*12)*4)
-		rect(p.x-20,p.y-20+flap,10,5,c.darkened(.5))
-		rect(p.x+10,p.y-20-flap,10,5,c.darkened(.5))
-	else:
-		rect(p.x-10,p.y-3,7,4,INK)
-		rect(p.x+3,p.y-3,7,4,INK)
-	rect(p.x-13,p.y-26,26,22,INK)
-	rect(p.x-10,p.y-24,20,17,tint.darkened(.45))
-	rect(p.x-10,p.y-24,20,3,tint)
-	rect(p.x-7,p.y-18,4,4,CREAM)
-	rect(p.x+3,p.y-18,4,4,CREAM)
-	rect(p.x-4,p.y-10,8,2,INK)
-	diamond(p+Vector2(-9,-28),4,tint)
-	diamond(p+Vector2(9,-28),4,tint)
-
-func boss_art() -> void:
-	var b = g.boss
-	var c = Color(World.ZONES[g.zone].color)
-	var at = b.p
-	g.draw_arc(at,57,0,TAU,24,Color(c,.15),2,false)
-	for i in range(6):
-		var a = i*TAU/6+g.clock*.3
-		diamond(at+Vector2(cos(a),sin(a))*57,3,Color(c,.5))
-	tex("boss_%d" % g.zone,Rect2((at-Vector2(48,48)).floor(),Vector2(96,96)),Color(1.8,1.8,1.8) if b.flash>0 else Color.WHITE)
-	if b.phase==2:
-		for i in range(4):star(at+Vector2(-36+i*24,-50-abs(sin(g.clock*4+i))*8),c,2)
-
-func pickup(gift: Dictionary) -> void:
-	var at = gift.p.floor()
-	var c = MINT
-	g.draw_arc(at,12,0,TAU,12,Color(c,.55),1,false)
-	diamond(at,9,Color("244d51"))
-	match gift.kind:
-		"heal":heart(at-Vector2(3,3),CORAL)
-		"shield":
-			g.draw_colored_polygon(PackedVector2Array([at+Vector2(-5,-5),at+Vector2(5,-5),at+Vector2(4,2),at+Vector2(0,6),at+Vector2(-4,2)]),MINT)
-			line(at+Vector2(0,-3),at+Vector2(0,3),Color("337074"))
-		"slow":
-			g.draw_arc(at,5,0,TAU,12,CREAM,1,false)
-			line(at,at+Vector2(0,-4),CREAM)
-			line(at,at+Vector2(3,0),CREAM)
-		"rapid":
-			line(at+Vector2(2,-5),at+Vector2(-2,0),CREAM,2)
-			line(at+Vector2(-2,0),at+Vector2(2,0),CREAM,2)
-			line(at+Vector2(2,0),at+Vector2(-2,5),CREAM,2)
-	star(at+Vector2(13,-9),c,1)
-
-func hud() -> void:
-	var c = Color(World.ZONES[g.zone].color)
-	panel(Rect2(10,9,164,35),INK,EDGE)
-	for i in range(3):heart(Vector2(20+i*21,19),CORAL if i<g.hp else Color("3c3947"),2)
-	text("%06d" % g.score,94,30,12,CREAM)
-	panel(Rect2(183,9,272,35),INK,EDGE)
-	text("%02d" % (g.selected+1),193,31,18,c)
-	fitted(g.level_data.get("name",""),227,30,218,11,CREAM)
-	panel(Rect2(464,9,113,35),INK,EDGE)
-	if g.level_data.get("boss",false):
-		center("JEFE · FASE %d" % g.boss.get("phase",1),520,30,10,c)
-	else:
-		var remain = maxi(0,int(ceil(g.duration-g.elapsed)))
-		center("%02d:%02d" % [remain/60,remain%60],520,32,17,CREAM)
-	button("II",Rect2(586,9,44,35),"pause")
-	var progress = minf(g.elapsed/g.duration,1)
-	rect(11,48,566,3,Color("273447"))
-	rect(11,48,566*progress,3,c)
-	if not g.boss.is_empty():
-		var b = g.boss
-		panel(Rect2(210,60,220,18),INK,EDGE)
-		rect(213,63,214*maxf(0,b.hp/b.max_hp),3,c)
-		center(World.ZONES[g.zone].boss,320,74,8,CREAM)
-	# Dash status is visible without covering the arena.
-	panel(Rect2(12,60,97,17),INK,EDGE)
-	var ready = g.dash_cooldown<=0
-	text("IMPULSO" if ready else "RECARGANDO",18,72,8,MINT if ready else MUTED)
-	rect(76,66,26*(1-clampf(g.dash_cooldown/1.15,0,1)),4,MINT)
-	if g.slow_time>0:
-		panel(Rect2(12,82,97,17),INK,EDGE)
-		text("TIEMPO LENTO  %d" % int(ceil(g.slow_time)),18,94,8,MINT)
-	if g.rapid_time>0:
-		panel(Rect2(12,104,97,17),INK,EDGE)
-		text("RÁFAGA  %d" % int(ceil(g.rapid_time)),18,116,8,MINT)
-	if g.shield>0:
-		text("ESCUDO ACTIVO",516,67,8,MINT)
-
-func touch_controls() -> void:
-	var labels = {"left":"<","right":">","duck":"ABAJO","dash":"IMPULSO","shoot":"FUEGO","jump":"SALTO"}
-	for pair in g.touch_rects():
-		var r = pair[1]
-		var active = g.touch_actions.get(pair[0],false) or g.mouse_action==pair[0]
-		panel(r,Color("33514e") if active else Color(.06,.10,.15,.84),Color("57776f"))
-		center(labels[pair[0]],r.get_center().x,r.get_center().y+4,9,MINT)
-
-func tutorial() -> void:
-	var messages = ["MUÉVETE  /  A D o flechas", "SALTA DOS VECES  /  ESPACIO", "AGÁCHATE  /  S o flecha abajo", "DISPARA  /  Mantén J", "IMPÚLSATE  /  SHIFT o K"]
-	if g.settings.touch:
-		messages = ["MUÉVETE  /  Botones < y >", "SALTA DOS VECES  /  SALTO", "AGÁCHATE  /  Mantén ABAJO", "DISPARA  /  Mantén FUEGO", "ESQUIVA  /  Botón IMPULSO"]
-	panel(Rect2(135,108,370,63),INK,Color("789c8c"))
-	center("PRIMEROS PASOS  %d / 5" % (g.tutorial_step+1),320,124,8,MINT)
-	center(messages[g.tutorial_step],320,145,13,CREAM)
-	button("SALTAR GUÍA",Rect2(266,177,108,23),"skip_tutorial")
+	combat.paint()
 
 func dim() -> void:
 	rect(0,0,640,360,Color(.025,.035,.065,.84))
@@ -462,7 +282,7 @@ func settings_menu() -> void:
 		text(controls[i][0],333,126+i*24,9,CREAM)
 		text(controls[i][1],457,126+i*24,9,MUTED)
 	text("MÓVIL: JUEGA EN HORIZONTAL",333,285,9,MINT)
-	text("El disparo apunta al enemigo cercano.",333,303,8,MUTED)
+	text("Gira hacia el enemigo y mantén J.",333,303,8,MUTED)
 	text("Sin conexión · Sin anuncios · Sin compras",45,325,8,MUTED)
 
 func ending() -> void:

@@ -28,6 +28,7 @@ func run() -> void:
 	game.capture_mode = true
 	root.add_child(game)
 	game.set_process(false)
+	game.set_physics_process(false)
 	game.settings.sound = false
 	game.unlocked=0
 	game.change_state("title")
@@ -55,6 +56,15 @@ func run() -> void:
 	game.change_state("play")
 	await capture("mobile")
 	game.settings.touch=false
+	game.capture_mode=false
+	game.begin_level(0)
+	game.change_state("play")
+	for page in range(3):
+		game.guide_page=page
+		await capture("guide_%d" % page)
+	game.activate("guide_next")
+	await capture("practice")
+	game.begin_level(19)
 	for screen in ["loading","pause","dead","victory","settings","ending"]:
 		game.change_state(screen)
 		game.state_time=.8

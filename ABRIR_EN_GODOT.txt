@@ -1,4 +1,4 @@
-PIXEL PANIC
+PIXEL PANIC 0.2
 ===========
 
 1. Descomprime esta carpeta completa.
@@ -8,7 +8,9 @@ PIXEL PANIC
 5. En AJUSTES activa MODO LIGERO si tu computadora lo necesita.
 
 Controles: A/D mover, ESPACIO doble salto, S agacharse,
-J disparar, SHIFT impulso, ESC pausa.
+J disparar hacia donde miras, SHIFT impulso, ESC pausa.
+Abajo + salto: bajar de una plataforma.
+El nivel 1 siempre muestra la guía; puedes omitirla.
 
 Este archivo es el PROYECTO EDITABLE de Godot, no un EXE ni un APK.
 La guía LEEME.md explica cómo exportarlo y los requisitos de equipos antiguos.

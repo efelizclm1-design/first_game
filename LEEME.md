@@ -1,6 +1,6 @@
 # Pixel Panic
 
-**Versión inicial jugable · Godot 4 · Interfaz en español · Estética oscura**
+**Versión 0.2 · Godot 4 · Interfaz en español · Mundos con identidad propia**
 
 Nilo, un pequeño guardián con una bufanda demasiado bonita para rendirse, debe
 sobrevivir a veinte arenas de peligros, criaturas y jefes. El escenario permanece
@@ -8,7 +8,8 @@ fijo: tú te mueves, saltas, esquivas y disparas.
 
 ## Abrir y jugar
 
-1. Descomprime **toda** la carpeta `PixelPanic` en una carpeta de tu computadora.
+1. Descomprime **todo** el ZIP en una carpeta de tu computadora. La carpeta
+   puede llamarse `first_game-main`, `first_game-...` o `PixelPanic`.
 2. Abre **Godot 4.6.3 estándar**, sin necesidad de .NET. Esta es la versión probada.
 3. En el gestor de proyectos pulsa **Importar** y selecciona `project.godot`.
 4. Espera a que Godot importe los gráficos y sonidos. Pulsa **F5** para
@@ -34,10 +35,21 @@ pero la validación realizada es con 4.6.3.
 | Elegir nivel | ←/→ y Enter, o ratón | Tocar nivel y ENTRAR |
 | Reintentar | R en pausa o derrota | Botón de reintento |
 
-Puedes mover, saltar y disparar a la vez. Los disparos apuntan al enemigo cercano.
+Puedes mover, saltar y disparar a la vez. Nilo mira hacia el lado al que lo mueves.
+Los disparos tienen ayuda de puntería hacia enemigos que estén **delante**; gira
+para atacar a un enemigo detrás. Agachado + salto permite bajar de las plataformas.
 El ajuste **Disparo automático** permite centrarse en esquivar. Los controles
 se muestran automáticamente en dispositivos táctiles; también puedes activarlos
 manualmente en Ajustes. Juega en horizontal.
+
+## Guía del primer nivel
+
+Cada vez que entras o reintentas el nivel 01 aparecen tres páginas: controles,
+lectura de avisos y reglas/ayudas. Pulsa **SIGUIENTE** o Enter. Después hay seis
+ejercicios: moverse, doble salto, agacharse, derrotar un enemigo, usar el impulso y
+recoger un escudo. No avanzan por un temporizador: debes probar cada acción.
+Durante la guía el mundo está detenido; en la práctica no pierdes corazones.
+**OMITIR GUÍA / YA SÉ JUGAR** inicia directamente el nivel.
 
 ## Las reglas
 
@@ -45,13 +57,18 @@ manualmente en Ajustes. Juega en horizontal.
   inmediatamente; los niveles ya superados permanecen desbloqueados.
 - Los niveles normales se completan sobreviviendo al contador. En un nivel de
   jefe debes agotar su barra de vida.
-- Los avisos dorados anuncian objetos que caen. Las flechas laterales anuncian
-  proyectiles. Los signos rojos en el suelo anuncian pinchos o columnas.
-- Los peligros esperan entre 0,65 y 0,95 segundos antes de activarse. El terreno
-  da un aviso de 1,25 segundos antes de perder sus bordes durante seis segundos.
+- Los rombos amarillos **!** y sus líneas anuncian la trayectoria. El aro se
+  vacía hasta la activación. Los enemigos también muestran aviso y animación de ataque.
+- Los peligros del director tienen entre **0,85 y 1,45 s** de aviso según el nivel
+  y el momento. Los bordes avisan **1,65 s**, se retiran gradualmente y vuelven.
+- En el infierno hay **grietas que avisan 1,8 s** antes de convertirse en lava
+  durante 2,8 s. Sal del tramo, salta o usa una plataforma. Aterrizar en lava
+  hace daño; queda suelo seguro a los lados. Allí la lava reemplaza el colapso de bordes.
 - Los disparos altos se evitan agachándose; los bajos, saltando. Los avisos
   señalan peligros reales, y el impulso protege durante un instante.
-- La velocidad y frecuencia aumentan durante cada arena. En el glaciar, el
+- La velocidad y frecuencia aumentan suavemente durante cada arena. Cada nivel
+  empieza y termina más difícil que el anterior, sin reinicio al cambiar de mundo.
+  En el glaciar, el
   personaje tiene algo de inercia. Los jefes cambian de fase al perder media vida.
 - Ayudas: **escudo** (absorbe un golpe), **corazón** (cura, máximo 3), **reloj**
   (6 segundos de ralentización) y **rayo** (7 segundos de disparo rápido).
@@ -67,21 +84,31 @@ manualmente en Ajustes. Juega en horizontal.
 | Bosque Ámbar | 01–04 | Hojas, bellotas, zarzas y criaturas de otoño | El Rey de la Hojarasca |
 | Glaciar de Cristal | 05–08 | Cristales, hielo, granizo e inercia | La Emperatriz de Hielo |
 | Ruinas Neón | 09–12 | Chatarra, drones y circuitos | El Alcalde Cortocircuito |
-| Cielo Roto | 13–16 | Plumas, rayos y enemigos voladores | El Heraldo de la Tormenta |
+| Reino Celestial | 13–16 | Nubes, pájaros, puerta gigante, ángeles, pianos y flechas | El Gran Serafín |
 | Caldera Infernal | 17–20 | Lava, calaveras y obsidiana | Don Pánico |
 
-Cada zona contiene 16 variantes de objetos (80 en total), con ocho siluetas base
-y dos variantes de material por zona. Comparten cuatro familias de comportamiento:
-caídas, proyectiles laterales, erupciones del suelo y disparos enemigos. Los veinte
-niveles combinan duración, velocidad, aparición de enemigos, cambios de suelo y
-cinco jefes con ataques propios; no son veinte mecánicas completamente distintas.
+Los veinte niveles tienen fondos y luces propios: sendero de otoño, molino,
+cementerio, roble real; lago, observatorio, gruta, palacio helado; estación, mercado,
+reactor, torre; puertas del paraíso, puerto de nubes, catedral y trono celestial;
+puente, forja, ciudad de obsidiana y volcán. Hay tres apariencias y nombres locales
+de enemigos por nivel (60 en total), con tres roles de combate compartidos:
+tirador, embestidor y volador.
+
+Cada región contiene 16 objetos nombrados. Algunas familias comparten siluetas y
+comportamientos; los celestiales incluyen pianos, flechas, arpas, campanas,
+trompetas, columnas y relojes. En las ráfagas del cielo, los **pianos bajos se
+saltan** y las **flechas altas se esquivan agachándose**. Los ángeles disparan
+flechas tras fijar su dirección durante el aviso.
 
 ## Computadoras modestas
 
-El juego dibuja a **640 × 360**, escalado con filtro de vecino más cercano.
-Usa el renderizador **Compatibility**, sin shaders, luces dinámicas, texturas 4K
-ni físicas complejas. Hay límites de 46 peligros, 6 enemigos, 36 balas,
-5 ayudas y 90 partículas simultáneas. Las texturas de fondo se cargan una vez.
+El combate dibuja a **1280 × 720** con píxeles finos, animaciones direccionales y
+una arena más amplia. Las pantallas y el mapa conservan su composición original.
+Usa **Compatibility**, sin shaders personalizados, luces dinámicas, texturas 4K
+ni físicas complejas. La simulación corre a 60 pasos por segundo.
+
+Hay límites de **54 peligros, 4 enemigos, 48 balas, 5 ayudas y 120 partículas**.
+Solo se conserva un fondo grande y una hoja de enemigos de nivel a la vez.
 
 Si tu computadora va justa, activa **Modo ligero**: limita a 30 FPS, reduce
 partículas y desactiva el temblor de cámara. Cierra el editor al jugar una
@@ -122,15 +149,18 @@ partida. El código de inicio ignora un JSON ilegible en vez de impedir jugar.
 
 - `scripts/world.gd`: nombres, zonas, objetos, frases y parámetros de los 20 niveles.
 - `scripts/game.gd`: movimiento, combate, colisiones, progresión, sonido y guardado.
-- `scripts/painter.gd`: dibujo de las pantallas, HUD, mapa y efectos.
+- `scripts/painter.gd`: pantallas originales, mapa, carga y menús.
+- `scripts/combat_painter.gd`: arena, personaje, enemigos, avisos y guía.
+- `assets/combat/`: veinte fondos a 1280×720, animaciones y ataques temáticos.
 - `assets/art/`: PNG originales a resolución nativa.
 - `assets/audio/`: cinco músicas originales y efectos sintetizados.
 - `scenes/main.tscn`: escena inicial, enlazada por `project.godot`.
-- `tools/create_assets.py`: generador de los recursos originales. Solo para
+- `tools/create_combat_art.py`: genera el arte de combate de la versión 0.2.
+- `tools/create_assets.py`: generador del arte y audio iniciales. Solo para
   regenerarlos se necesita Python y Pillow; no se ejecuta al jugar.
 - `tests/`: pruebas funcionales y recorrido visual automático.
 
-Es una primera versión completa para probar y ajustar. Las ilustraciones son
+Es una versión jugable para probar y seguir ajustando la dificultad. Las ilustraciones son
 originales y el control es de arena fija; no incluye personajes ni recursos de Cuphead.
 
 ## Pruebas reproducibles
@@ -145,6 +175,8 @@ godot --headless --script tests/smoke.gd -- --test
 La prueba funcional usa invulnerabilidad únicamente al simular la duración de la
 campaña, para aislar sus eventos; daño, muerte, escudos y colisiones se prueban
 por separado. No sustituye una prueba humana de dificultad o diversión.
+`tests/playability.gd` recorre los dos primeros niveles con un controlador reactivo,
+sin añadir invulnerabilidad ni cambiar los parámetros del juego.
 
 La prueba de guardado usa `pixel_panic_test_save.json`, separado de tu partida,
 en `user://` dentro del directorio que indique
@@ -157,8 +189,8 @@ Con pantalla gráfica disponible:
 godot --script tests/render.gd -- --test --output=/tmp/pixel-panic-capturas
 ```
 
-Ese recorrido guarda 29 capturas: veinte arenas, portada, mapa, controles móviles,
-carga, pausa, derrota, victoria, ajustes y final. Consulta `VALIDACION.md` para los
+Ese recorrido guarda 33 capturas: veinte arenas, portada, mapa, controles móviles,
+carga, pausa, derrota, victoria, ajustes, final, tres páginas de guía y práctica. Consulta `VALIDACION.md` para los
 resultados de la versión entregada.
 
 ## Créditos
